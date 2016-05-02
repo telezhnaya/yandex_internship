@@ -35,13 +35,22 @@ class Person(object):
     def add_parent(self, other):
         self.parents.add(other)
 
+    def update_gender(self, gender):
+        self.gender = gender
+
     def add_child(self, other):
         self.children.add(other)
 
-    def parent_request(self, gender):
+    def parent_request_helper(self, gender):
+        if gender == self.__class__.GND_UNKNOWN:
+            return [parent.name for parent in self.parents]
         for parent in self.parents:
             if parent.gender == gender:
-                return parent.name
+                return [parent.name]
+        return []
+
+    def parent_request(self, gender):
+        return ", ".join(self.parent_request_helper(gender))
 
     def child_request(self, gender):
         return ', '.join(self.child_request_helper(gender))
@@ -83,7 +92,7 @@ class PedigreeHolder(object):
 
     def add(self, statement):
         who, _, whose, rel = statement.split()
-        assert whose.endswith('\'s')
+        assert whose.endswith("'s")
         self.add_relative(who, whose[:-2], rel)
 
     def request(self, question):
@@ -99,8 +108,12 @@ class PedigreeHolder(object):
         who_gender, whose_gender = self.get_genders_by_reltype(rel_type)
         if who_name not in self.people:
             self.people[who_name] = Person(who_name, who_gender)
+        elif who_gender != Person.GND_UNKNOWN:
+            self.people[who_name].update_gender(who_gender)
         if whose_name not in self.people:
             self.people[whose_name] = Person(whose_name, whose_gender)
+        elif whose_gender != Person.GND_UNKNOWN:
+            self.people[whose_name].update_gender(whose_gender)
         self.people[who_name].add_link(self.people[whose_name], rel_type)
         self.check_relatives()
 
@@ -134,6 +147,21 @@ class PedigreeHolder(object):
                 return person.spouse_request(gender) or self.__class__.DEFAULT_ANSWER
             if rel_type in ['brother', 'sister']:
                 return person.sibling_request(gender) or self.__class__.DEFAULT_ANSWER
+            if rel_type in ['grandchild', 'grandson', 'granddaughter']:
+                ans = []
+                children = person.child_request_helper(Person.GND_UNKNOWN)
+                for child in children:
+                    t = self.people[child].child_request(gender)
+                    if t: ans.append(t)
+                return ', '.join(ans) or self.__class__.DEFAULT_ANSWER
+            if rel_type in ['grandfather', 'grandmother']:
+                ans = []
+                parents = person.parent_request_helper(Person.GND_UNKNOWN)
+                for parent in parents:
+                    aaa = self.people[parent]
+                    t = aaa.parent_request(gender)
+                    if t: ans.append(t)
+                return ', '.join(ans) or self.__class__.DEFAULT_ANSWER
         except KeyError:
             return self.__class__.DEFAULT_ANSWER
 
@@ -192,6 +220,9 @@ if __name__ == "__main__":
     assert set(ph.request("Who is Darren's sister?").split(", ")) == {"Carol", "Frank?"}
     assert ph.request("Who is Frank's brother?") == "Darren"
     assert ph.request("Who is Darren's brother?") == "Frank?"
-    #assert ph.request("Who is Emily's grandfather?") == "Brett"
-    #assert ph.request("Who is Ann's grandson?") == "Don't know"
-    #assert ph.request("Who is Ann's grandchild?") == "Emily"
+    assert ph.request("Who is Emily's grandfather?") == "Brett"
+    assert ph.request("Who is Ann's grandson?") == "Don't know"
+    assert ph.request("Who is Ann's grandchild?") == "Emily"
+
+    assert ph.request("Who is Frank's father?") == "Brett"
+    assert ph.request("Who is Emily's grandmother?") == "Ann"
