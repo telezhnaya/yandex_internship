@@ -49,6 +49,7 @@ class Person(object):
                     child.dad = new_dad
                 self.dad, self.mom = new_dad, new_mom
             elif self.dad != new_dad:
+                assert new_mom is None
                 self.mom = new_dad
         else:
             self.dad, self.mom = new_dad, new_mom
@@ -65,8 +66,10 @@ class Person(object):
     def try_set_opposite_gender(self, other):
         if other.gender != Gender.unknown:
             if other.gender == Gender.male:
+                assert self.gender != Gender.male
                 self.gender = Gender.female
             else:
+                assert self.gender != Gender.female
                 self.gender = Gender.male
 
     def set_parent_to_children(self, parent):
@@ -209,7 +212,7 @@ class PedigreeHolder:
             return self.DEFAULT_ANSWER
 
         gender = self.people[name].gender
-        if gender == Gender.unknown:
+        if gender == Gender.unknown or gender_word not in ["man", "woman"]:
             return self.DEFAULT_ANSWER
         asked = Gender.male if gender_word == "man" else Gender.female
         return "Yes" if gender == asked else "No"
@@ -258,7 +261,8 @@ ph.add("Filmore is Lily's son")
     ("Who is Frank's father?", "Brett"),
     ("Who is Emily's grandmother?", "Ann"),
     ("Who is Nathan's brother?", "John"),
-    ("Who is Jeremy's wife?", "Lily?")])
+    ("Who is Jeremy's wife?", "Lily?"),
+    ("Is Frank a goat?", "Don't know")])
 def test_base(question, answer):
     assert ph.request(question) == answer
 
