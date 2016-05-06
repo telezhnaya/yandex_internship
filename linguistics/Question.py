@@ -1,18 +1,40 @@
 # -*- coding: utf-8 -*-
+import pytest
 
 from collections import deque
+
+# Несколько условностей, которые я приняла как правило:
+# Все предложения на входе всегда даны в верхнем регистре и без точки в конце.
+# В случае сложносоставного глагола * ставится после первого
+# (того, который уйдет в начало).
+# Добавила символ: решетка в предложении как показатель отсутствия модальности.
+# В случае использования have to или устойчивых словосочетаний (to have dinner,
+# to have a walk) нужно поставить # в любое место в предложении.
+# Можно также поставить # в любом предложении с have,
+# где мы бы не хотели использовать have как модальный глагол.
+# Я не стала даже пытаться поддерживать Past Simple, потому что
+# для его поддержки необходимо учитывать неправильные глаголы. Для этого
+# нужно подключать сторонние библиотеки (так как вручную не перечислить).
+# В таком случае, можно было решить всю проблему с помощью сторонних библиотек.
+# Но, как я поняла, суть задания была не в этом. Надеюсь, наши мнения сойдутся.
 
 
 class Questioner(object):
     @staticmethod
     def is_aux_or_modal_verb(word):
-        return word in "AM IS ARE MUST OUGHT CAN COULD SHALL SHOULD " \
-                               "MAY MIGHT WILL WOULD HAVE HAS WAS WERE".split()
+        return word in ["AM", "IS", "ARE", "DO", "DOES", "MUST", "OUGHT",
+                        "CAN", "COULD", "SHALL", "SHOULD", "MAY", "MIGHT",
+                        "WILL", "WOULD", "HAVE", "HAS", "WAS", "WERE"]
 
-    def cut_negative(self, word):
-        is_negative = word.endswith("N'T") or word.endswith("NOT")
-        self.negative_particle = word[-3:] if is_negative else ""
-        return word[:-3] if is_negative else word
+    @staticmethod
+    def calc_negative_particle(verb):
+        if verb.endswith("N'T*") or verb.endswith("NOT*"):
+            return verb[-4:-1]
+        return ""
+
+    @staticmethod
+    def has_es_ending(word):
+        return word[-3] in "AEIOUYXZ" or word[-4:-2] in ["SS", "SH", "CH"]
 
     def get_question_word(self, word, not_modal):
         if not_modal or not self.is_aux_or_modal_verb(word):
@@ -21,66 +43,90 @@ class Questioner(object):
             ans = word
         return ans + self.negative_particle
 
-    @staticmethod
-    def has_es_ending(word):
-        return word[-3] in "AEIOUXZ" or word[-4:-2] in "SS SH CH".split()
-
     def get_verb_lemma(self, word):
         if word == "HAS":
             return "HAVE"
         if word.endswith("ES") and self.has_es_ending(word):
-            if word[-3] == "I":
-                return word[:-3] + "Y"
-            return word[:-2]
-        elif word.endswith("S") and not word.endswith("SS"):
+            return word[:-2] if word[-3] != "I" else word[:-3] + "Y"
+        if word.endswith("S") and not word.endswith("SS"):
             return word[:-1]
-        else:
-            return word
+        return word
+
+    def prepare(self, statement):
+        statement = statement.replace("#", "")
+        words = statement.split()
+        pos = next(i for i, w in enumerate(words) if w.endswith("*"))
+        verb = words[pos]
+
+        # Отрицательная частица стоит на одном и том же месте. Запомнили, какую
+        # предпочел пользователь, убираем ее, потом дописываем к вопр.слову
+        self.negative_particle = self.calc_negative_particle(verb)
+        words[pos] = verb[:-4] + "*" if self.negative_particle else verb
+        if len(words) > pos + 2 and words[pos + 1] == "NOT":
+            self.negative_particle = " NOT"
+            words.pop(pos + 1)
+        return words
 
     def request(self, statement):
         request = deque()
-        for word in statement.strip().split():
+        surely_not_modal = "#" in statement
+        # He plays* and shouts* -> вопр.слово нам нужно лишь одно
+        first_verb = True
+
+        for word in self.prepare(statement):
             if word.endswith("*"):
                 word = word[:-1]
-                word = self.cut_negative(word)
-                surely_not_modal = statement.find("#") != -1
-                request.appendleft(self.get_question_word(word, surely_not_modal))
+                if first_verb:
+                    q_word = self.get_question_word(word, surely_not_modal)
+                    request.appendleft(q_word)
                 if surely_not_modal or not self.is_aux_or_modal_verb(word):
-                    word = self.get_verb_lemma(word)
-                    if word != "DO" or not self.negative_particle:
-                        request.append(word)
+                    request.append(self.get_verb_lemma(word))
+                first_verb = False
             else:
-                request.append(word.replace("#", ""))
+                request.append(word)
         return " ".join(request) + "?"
 
-if __name__ == "__main__":
-    q = Questioner()
-    assert q.request("KATE GOES* TO SCHOOL") == "DOES KATE GO TO SCHOOL?"
-    assert q.request("ALEX IS* TALL") == "IS ALEX TALL?"
-    assert q.request("WINTER USUALLY COMES* LATE") == "DOES WINTER USUALLY COME LATE?"
-    assert q.request("STUDENTS OFTEN COME* LATE") == "DO STUDENTS OFTEN COME LATE?"
-    # Оба варианта позволительны, но использование have в качестве модального
-    # позволит обобщить код (для использования в других временах, к примеру)
-    assert q.request("I HAVE* A CAR") == "HAVE I A CAR?"
-    assert q.request("LIBRARY OF CONGRESS POSSESSES* BOOKS") == "DOES LIBRARY OF CONGRESS POSSESS BOOKS?"
-    assert q.request("I MISS* MY DOG") == "DO I MISS MY DOG?"
-    assert q.request("THEY FIX* EVERYTHING") == "DO THEY FIX EVERYTHING?"
-    assert q.request("HE MUST* DO HIS HOMEWORK") == "MUST HE DO HIS HOMEWORK?"
-    assert q.request("I CAN* HELP YOU") == "CAN I HELP YOU?"
-    assert q.request("KATE STUDIES* WELL") == "DOES KATE STUDY WELL?"
-    assert q.request("THEY HAVE* BEEN WORKING ALL NIGHT") == "HAVE THEY BEEN WORKING ALL NIGHT?"
-    assert q.request("KATE WILL* STUDY WELL") == "WILL KATE STUDY WELL?"
-    assert q.request("HE WAS* ASKED ABOUT IT") == "WAS HE ASKED ABOUT IT?"
-    assert q.request("HE HAS* TO# GO THERE") == "DOES HE HAVE TO GO THERE?"
-    assert q.request("I HAVE* TO# GO THERE") == "DO I HAVE TO GO THERE?"
-    assert q.request("HE NEEDS* TO GO THERE") == "DOES HE NEED TO GO THERE?"
-    assert q.request("I HAVE* A WALK#") == "DO I HAVE A WALK?"
-    assert q.request("HE HAS* A CAR#") == "DOES HE HAVE A CAR?"
-    assert q.request("HE OFTEN HAS* TO# GET UP EARLY") == "DOES HE OFTEN HAVE TO GET UP EARLY?"
-    assert q.request("HE DOES* HIS HOMEWORK") == "DOES HE DO HIS HOMEWORK?"
-    assert q.request("HE HASN'T* SPENT ALL THE TIME") == "HASN'T HE SPENT ALL THE TIME?"
-    assert q.request("I HAVEN'T* SPENT ALL THE TIME") == "HAVEN'T I SPENT ALL THE TIME?"
-    assert q.request("I DON'T* GO TO SCHOOL") == "DON'T I GO TO SCHOOL?"
-    assert q.request("KATE DOESN'T* GO TO SCHOOL") == "DOESN'T KATE GO TO SCHOOL?"
-    assert q.request("HE HASN'T* TO# GO THERE") == "DOESN'T HE HAVE TO GO THERE?"
-    assert q.request("I HAVEN'T* TO# GO THERE") == "DON'T I HAVE TO GO THERE?"
+
+q = Questioner()
+
+
+@pytest.mark.parametrize("question, answer", [
+    ("KATE GOES* TO SCHOOL", "DOES KATE GO TO SCHOOL?"),
+    ("ALEX IS* TALL", "IS ALEX TALL?"),
+    ("WINTER USUALLY COMES* LATE", "DOES WINTER USUALLY COME LATE?"),
+    ("STUDENTS OFTEN COME* LATE", "DO STUDENTS OFTEN COME LATE?"),
+    ("I HAVE* A CAR#", "DO I HAVE A CAR?"),
+    ("I HAVE* A CAR", "HAVE I A CAR?"),
+    ("LIBRARY ... POSSESSES* BOOKS", "DOES LIBRARY ... POSSESS BOOKS?"),
+    ("I MISS* MY DOG", "DO I MISS MY DOG?"),
+    ("THEY FIX* EVERYTHING", "DO THEY FIX EVERYTHING?"),
+    ("HE MUST* DO HIS HOMEWORK", "MUST HE DO HIS HOMEWORK?"),
+    ("I CAN* HELP YOU", "CAN I HELP YOU?"),
+    ("KATE STUDIES* WELL", "DOES KATE STUDY WELL?"),
+    ("THEY HAVE* BEEN WORKING ALL NIGHT", "HAVE THEY BEEN WORKING ALL NIGHT?"),
+    ("KATE WILL* STUDY WELL", "WILL KATE STUDY WELL?"),
+    ("HE WAS* ASKED ABOUT IT", "WAS HE ASKED ABOUT IT?"),
+    ("HE HAS* TO# GO THERE", "DOES HE HAVE TO GO THERE?"),
+    ("I HAVE* TO# GO THERE", "DO I HAVE TO GO THERE?"),
+    ("HE NEEDS* TO GO THERE", "DOES HE NEED TO GO THERE?"),
+    ("I HAVE* A WALK#", "DO I HAVE A WALK?"),
+    ("HE HAS* A CAR#", "DOES HE HAVE A CAR?"),
+    ("HE OFTEN HAS* TO# GET UP EARLY", "DOES HE OFTEN HAVE TO GET UP EARLY?"),
+    ("HE DOES* HIS HOMEWORK#", "DOES HE DO HIS HOMEWORK?"),
+    ("HE HASN'T* SPENT ALL THE TIME", "HASN'T HE SPENT ALL THE TIME?"),
+    ("I HAVEN'T* SPENT ALL THE TIME", "HAVEN'T I SPENT ALL THE TIME?"),
+    ("I DON'T* GO TO SCHOOL", "DON'T I GO TO SCHOOL?"),
+    ("KATE DOESN'T* GO TO SCHOOL", "DOESN'T KATE GO TO SCHOOL?"),
+    ("HE HASN'T* TO# GO THERE", "DOESN'T HE HAVE TO GO THERE?"),
+    ("I HAVEN'T* TO# GO THERE", "DON'T I HAVE TO GO THERE?"),
+    ("HE HAS* NOT SPENT ALL THE TIME", "HAS NOT HE SPENT ALL THE TIME?"),
+    ("I HAVE* NOT SPENT ALL THE TIME", "HAVE NOT I SPENT ALL THE TIME?"),
+    ("I DO* NOT GO TO SCHOOL", "DO NOT I GO TO SCHOOL?"),
+    ("KATE DOES* NOT GO TO SCHOOL", "DOES NOT KATE GO TO SCHOOL?"),
+    ("HE HAS* NOT TO# GO THERE", "DOES NOT HE HAVE TO GO THERE?"),
+    ("I HAVE* NOT TO# GO THERE", "DO NOT I HAVE TO GO THERE?"),
+    ("I DO* MY FAVOUR#", "DO I DO MY FAVOUR?"),
+    ("HE DOES* MAKE SMTH", "DOES HE MAKE SMTH?"),
+    ("HE GOES* AND MAKES* SMTH", "DOES HE GO AND MAKE SMTH?")])
+def test_base(question, answer):
+    assert q.request(question) == answer
