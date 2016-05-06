@@ -27,23 +27,33 @@ class Person(object):
         # У каждого настоящего человека всегда есть какой-нибудь отец
         self.real = True if name else False
         if not name:
-            name = str(self.name_generator)
-            self.name_generator += 1
+            name = str(Person.name_generator)
+            Person.name_generator += 1
         self.name = name
         self.gender = gender
         self.spouse = None
         self.children = set()
+        # Возможно, код стал бы легче, если бы мы хранили 2 переменные -
+        # мать и отца. Но бывают ситуации, когда неизвестен пол родителя.
         self.parents = set()
 
     def __hash__(self):
         return self.name.__hash__()
 
-    def remove_imagine_parents(self):
+    def replace_to_true_parent(self, new_parent, other=None):
+        for parent in self.parents:
+            if not parent.real:
+                new_parent.children.update(parent.children)
+                for child in parent.children:
+                    child.parents = {new_parent}
+        # Удаляем вымышленного отца: больше он не нужен
         self.parents = {parent for parent in self.parents if parent.real}
+        self.parents.add(new_parent)
+        if other:
+            self.parents.add(other)
 
     def add_parent(self, parent):
-        self.remove_imagine_parents()
-        self.parents.add(parent)
+        self.replace_to_true_parent(parent)
         if parent.spouse:
             self.parents.add(parent.spouse)
         if len(self.parents) == 2:
@@ -75,15 +85,15 @@ class Person(object):
             self.set_parent_to_children(other)
             other.set_parent_to_children(self)
         elif rel_type in ["brother", "sister"]:
-            self.remove_imagine_parents()
-            if self.parents:
-                other.remove_imagine_parents()
-            self.parents.update(other.parents)
-            other.parents.update(self.parents)
+            first, *second = self.parents
+            # Если первый настоящий - второй 100% настоящий
+            if first.real:
+                other.replace_to_true_parent(*self.parents)
+            o_first, *o_second = other.parents
+            self.replace_to_true_parent(*other.parents)
             # Достаточно обновить детей лишь у одного родителя, так как
-            # При запросе мы все равно всегда объединяем множества
-            parent, *_ = self.parents
-            parent.children.update({self, other})
+            # При запросе мы все равно всегда объединяем множества.
+            o_first.children.update({self, other})
         else:
             raise Exception("Unknown relation type: " + rel_type)
 
@@ -215,6 +225,13 @@ class PedigreeHolder:
         if rel_type in ["father", "son", "brother", "grandson", "grandfather"]:
             return Gender.male, Gender.unknown
         return Gender.unknown, Gender.unknown
+
+
+aph = PedigreeHolder()
+aph.add("Carol is Ann's sister")
+aph.add("Ann is Brett's sister")
+aph.add("Darren is Brett's father")
+print(aph.request("Who is Ann's father?"))
 
 
 ph = PedigreeHolder()
