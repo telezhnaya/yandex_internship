@@ -41,36 +41,45 @@ class Person(object):
     def __hash__(self):
         return self.name.__hash__()
 
-    def replace_to_true_parent(self, new_dad, new_mom=None):
+    def marry(self, wife):
+        self.spouse, wife.spouse = wife, self
+        self.set_opposite_gender(wife)
+        wife.set_opposite_gender(self)
+
+    def update_parents(self, new_dad, new_mom=None):
         if self.dad:
             if not self.dad.real:
                 new_dad.children.update(self.dad.children)
                 for child in self.dad.children:
-                    child.dad = new_dad
-                self.dad, self.mom = new_dad, new_mom
+                    child.dad, child.mom = new_dad, new_mom
             elif self.dad != new_dad:
-                assert new_mom is None
+                assert not new_mom or new_mom == self.dad
                 self.mom = new_dad
+
+                for child in self.dad.children:
+                    child.dad, child.mom = self.dad, self.mom
+                for child in self.mom.children:
+                    child.dad, child.mom = self.dad, self.mom
         else:
             self.dad, self.mom = new_dad, new_mom
+        if self.dad and self.mom:
+            self.dad.marry(self.mom)
 
-    def add_parent(self, parent):
-        self.replace_to_true_parent(parent)
-        if not self.mom and parent.spouse:
-            self.mom = parent.spouse
-        if self.mom and self.dad:
-            self.mom.spouse, self.dad.spouse = self.dad, self.mom
-            self.mom.try_set_opposite_gender(self.dad)
-            self.dad.try_set_opposite_gender(self.mom)
+    def _set_gender(self, gender):
+        if gender != Gender.unknown:
+            assert self.gender in {gender, Gender.unknown}
+            self.gender = gender
 
-    def try_set_opposite_gender(self, other):
-        if other.gender != Gender.unknown:
-            if other.gender == Gender.male:
-                assert self.gender != Gender.male
-                self.gender = Gender.female
-            else:
-                assert self.gender != Gender.female
-                self.gender = Gender.male
+    def update_gender(self, gender):
+        self._set_gender(gender)
+        if self.spouse:
+            self.spouse.set_opposite_gender(self)
+
+    def set_opposite_gender(self, other):
+        if other.gender == Gender.male:
+            self._set_gender(Gender.female)
+        elif other.gender == Gender.female:
+            self._set_gender(Gender.male)
 
     def set_parent_to_children(self, parent):
         for child in self.children:
@@ -78,30 +87,22 @@ class Person(object):
 
     def add_link(self, other, rel_type):
         if rel_type in ["child", "son", "daughter"]:
-            self.add_parent(other)
+            self.update_parents(other, other.spouse)
             other.children.add(self)
         elif rel_type in ["parent", "father", "mother"]:
             self.children.add(other)
-            other.add_parent(self)
+            other.update_parents(self, self.spouse)
         elif rel_type in ["husband", "wife"]:
             self.spouse, other.spouse = other, self
             self.set_parent_to_children(other)
             other.set_parent_to_children(self)
         elif rel_type in ["brother", "sister"]:
             if self.dad.real:
-                other.replace_to_true_parent(self.dad, self.mom)
-            self.replace_to_true_parent(other.dad, other.mom)
-            # Достаточно обновить детей лишь у одного родителя, так как
-            # При запросе мы все равно всегда объединяем множества.
-            other.dad.children.update({self, other})
+                other.update_parents(self.dad, self.mom)
+            # Останемся либо с реальными родителями, либо с одним вымышленным
+            self.update_parents(other.dad, other.mom)
         else:
             raise Exception("Unknown relation type: " + rel_type)
-
-    def update_gender(self, gender):
-        if gender != Gender.unknown:
-            self.gender = gender
-            if self.spouse:
-                self.spouse.try_set_opposite_gender(self)
 
     def get_name_for_request(self, gender):
         if gender in (self.gender, Gender.unknown):
@@ -122,9 +123,7 @@ class Person(object):
         return ", ".join(self.parent_request_helper(gender))
 
     def get_children(self, gender):
-        children = set()
-        for child in self.children:
-            children.add(child.get_name_for_request(gender))
+        children = (ch.get_name_for_request(gender) for ch in self.children)
         return {ch for ch in children if ch}
 
     def child_request_helper(self, gender=Gender.unknown):
@@ -138,8 +137,7 @@ class Person(object):
         siblings = self.dad.get_children(gender)
         if self.mom:
             siblings.update(self.mom.get_children(gender))
-        siblings.discard(self.name)
-        siblings.discard(self.name + "?")
+        siblings -= {self.name, self.name + "?"}
         return ", ".join(siblings)
 
     def spouse_request(self, gender):
@@ -171,6 +169,7 @@ class PedigreeHolder:
         if name not in self.people:
             self.people[name] = Person(name, gender)
             # У каждого человека есть отец! :-)
+            # Фиктивного отца нет в словаре: он не нужен там.
             self.people[name].add_link(Person(), "child")
         else:
             self.people[name].update_gender(gender)
@@ -242,6 +241,32 @@ ph.add("Nathan is Emily's brother")
 ph.add("John is Emily's brother")
 ph.add("Filmore is Jeremy's son")
 ph.add("Filmore is Lily's son")
+
+aph = PedigreeHolder()
+aph.add("Ann is Rosa's mother")
+aph.add("Lily is John's daughter")
+aph.add("Jeremy is John's son")
+aph.add("Mary is Jeremy's sister")
+aph.add("Lily is Jeremy's sister")
+aph.add("Rosa is Jeremy's sister")
+
+print(aph.request("Who is Mary's mother?"))
+assert aph.request("Who is Mary's mother?") == "Ann"
+assert aph.request("Who is Ann's husband?") == "John"
+assert aph.request("Who is Mary's brother?") == "Jeremy"
+
+aph2 = PedigreeHolder()
+aph2.add("Ann is Rosa's mother")
+aph2.add("Ann is Lily's mother")
+aph2.add("Lily is John's daughter")
+
+assert aph2.request("Who is Lily's mother?") == "Ann"
+assert aph2.request("Who is Lily's father?") == "John"
+assert aph2.request("Who is Rosa's mother?") == "Ann"
+assert aph2.request("Who is Rosa's father?") == "John"
+assert aph2.request("Who is Ann's husband?") == "John"
+assert aph2.request("Who is Rosa's sister?") == "Lily"
+
 
 
 @pytest.mark.parametrize("question, answer", [
