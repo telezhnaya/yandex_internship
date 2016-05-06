@@ -33,34 +33,34 @@ class Person(object):
         self.gender = gender
         self.spouse = None
         self.children = set()
-        # Возможно, код стал бы легче, если бы мы хранили 2 переменные -
-        # мать и отца. Но бывают ситуации, когда неизвестен пол родителя.
-        self.parents = set()
+        # Могут быть ситуации, когда мать и отец перепутаны местами.
+        # Правило: отец заполнен всегда, мать - как получится
+        self.dad = None
+        self.mom = None
 
     def __hash__(self):
         return self.name.__hash__()
 
-    def replace_to_true_parent(self, new_parent, other=None):
-        for parent in self.parents:
-            if not parent.real:
-                new_parent.children.update(parent.children)
-                for child in parent.children:
-                    child.parents = {new_parent}
-        # Удаляем вымышленного отца: больше он не нужен
-        self.parents = {parent for parent in self.parents if parent.real}
-        self.parents.add(new_parent)
-        if other:
-            self.parents.add(other)
+    def replace_to_true_parent(self, new_dad, new_mom=None):
+        if self.dad:
+            if not self.dad.real:
+                new_dad.children.update(self.dad.children)
+                for child in self.dad.children:
+                    child.dad = new_dad
+                self.dad, self.mom = new_dad, new_mom
+            elif self.dad != new_dad:
+                self.mom = new_dad
+        else:
+            self.dad, self.mom = new_dad, new_mom
 
     def add_parent(self, parent):
         self.replace_to_true_parent(parent)
-        if parent.spouse:
-            self.parents.add(parent.spouse)
-        if len(self.parents) == 2:
-            a, b = self.parents
-            a.spouse, b.spouse = b, a
-            a.try_set_opposite_gender(b)
-            b.try_set_opposite_gender(a)
+        if not self.mom and parent.spouse:
+            self.mom = parent.spouse
+        if self.mom and self.dad:
+            self.mom.spouse, self.dad.spouse = self.dad, self.mom
+            self.mom.try_set_opposite_gender(self.dad)
+            self.dad.try_set_opposite_gender(self.mom)
 
     def try_set_opposite_gender(self, other):
         if other.gender != Gender.unknown:
@@ -71,7 +71,7 @@ class Person(object):
 
     def set_parent_to_children(self, parent):
         for child in self.children:
-            child.parents = {self, parent}
+            child.dad, child.mom = self, parent
 
     def add_link(self, other, rel_type):
         if rel_type in ["child", "son", "daughter"]:
@@ -85,15 +85,12 @@ class Person(object):
             self.set_parent_to_children(other)
             other.set_parent_to_children(self)
         elif rel_type in ["brother", "sister"]:
-            first, *second = self.parents
-            # Если первый настоящий - второй 100% настоящий
-            if first.real:
-                other.replace_to_true_parent(*self.parents)
-            o_first, *o_second = other.parents
-            self.replace_to_true_parent(*other.parents)
+            if self.dad.real:
+                other.replace_to_true_parent(self.dad, self.mom)
+            self.replace_to_true_parent(other.dad, other.mom)
             # Достаточно обновить детей лишь у одного родителя, так как
             # При запросе мы все равно всегда объединяем множества.
-            o_first.children.update({self, other})
+            other.dad.children.update({self, other})
         else:
             raise Exception("Unknown relation type: " + rel_type)
 
@@ -103,13 +100,20 @@ class Person(object):
             if self.spouse:
                 self.spouse.try_set_opposite_gender(self)
 
+    def get_name_for_request(self, gender):
+        if gender in (self.gender, Gender.unknown):
+            return self.name
+        if self.gender == Gender.unknown:
+            return self.name + "?"
+
     def parent_request_helper(self, gender=Gender.unknown):
-        if gender == Gender.unknown:
-            return [parent.name for parent in self.parents]
-        for parent in self.parents:
-            if parent.gender == gender:
-                return [parent.name]
-        return []
+        answer = []
+        # Ну, женщины и мужчины часто меняются ролями. :-D
+        if self.dad.real:
+            answer.append(self.dad.get_name_for_request(gender))
+            if self.mom:
+                answer.append(self.mom.get_name_for_request(gender))
+        return [name for name in answer if name]
 
     def parent_request(self, gender):
         return ", ".join(self.parent_request_helper(gender))
@@ -117,11 +121,8 @@ class Person(object):
     def get_children(self, gender):
         children = set()
         for child in self.children:
-            if gender in (child.gender, Gender.unknown):
-                children.add(child.name)
-            elif child.gender == Gender.unknown:
-                children.add(child.name + "?")
-        return children
+            children.add(child.get_name_for_request(gender))
+        return {ch for ch in children if ch}
 
     def child_request_helper(self, gender=Gender.unknown):
         children = self.spouse.get_children(gender) if self.spouse else set()
@@ -131,9 +132,9 @@ class Person(object):
         return ", ".join(self.child_request_helper(gender))
 
     def sibling_request(self, gender):
-        siblings = set()
-        for parent in self.parents:
-            siblings.update(parent.get_children(gender))
+        siblings = self.dad.get_children(gender)
+        if self.mom:
+            siblings.update(self.mom.get_children(gender))
         siblings.discard(self.name)
         siblings.discard(self.name + "?")
         return ", ".join(siblings)
@@ -225,13 +226,6 @@ class PedigreeHolder:
         if rel_type in ["father", "son", "brother", "grandson", "grandfather"]:
             return Gender.male, Gender.unknown
         return Gender.unknown, Gender.unknown
-
-
-aph = PedigreeHolder()
-aph.add("Carol is Ann's sister")
-aph.add("Ann is Brett's sister")
-aph.add("Darren is Brett's father")
-print(aph.request("Who is Ann's father?"))
 
 
 ph = PedigreeHolder()
